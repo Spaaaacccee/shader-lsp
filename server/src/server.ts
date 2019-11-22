@@ -1,8 +1,3 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- * ------------------------------------------------------------------------------------------ */
-
 import {
   createConnection,
   TextDocuments,
@@ -17,13 +12,15 @@ import {
   TextDocumentPositionParams,
   Range
 } from "vscode-languageserver";
-import { AST, ShaderLab } from "./ast";
 
-// Create a connection for the server. The connection uses Node's IPC as a transport.
-// Also include all preview / proposed LSP features.
+import { AST, ShaderLab } from "./ast";
+import { format } from "./utils";
+
+const definitions = (ShaderLab.Definitions as unknown) as AST.DefinitionList;
+
+
 let connection = createConnection(ProposedFeatures.all);
-// Create a simple text document manager. The text document manager
-// supports full document sync only
+
 let documents: TextDocuments = new TextDocuments();
 
 let hasConfigurationCapability: boolean = false;
@@ -99,7 +96,9 @@ connection.onDidChangeConfiguration(change => {
   }
 
   // Revalidate all open text documents
-  documents.all().forEach(validateTextDocument);
+  // documents.all().forEach(()=>{
+
+  // });
 });
 
 function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
@@ -121,40 +120,14 @@ connection.onHover(e => {
   const doc = documents.get(e.textDocument.uri);
   if (doc) {
     const text = doc.getText();
-    const index = (() => {
-      let ch = 0;
-      let li = 0;
-      let i = 0;
-      while (ch < e.position.character || li < e.position.line) {
-        if (text[i] === "\n") {
-          li++;
-        } else {
-          ch++;
-        }
-        i++;
-      }
-      return i;
-    })();
-    const res = validateTextDocument(doc);
-    let node = res;
-    while (node.children && node.children.length) {
-      let n = node.children.find(
-        child =>
-          child.source.endIndex >= index && child.source.startIndex <= index
-      );
-      if (n) {
-        node = n;
-      }
-      break;
-    }
+    const nodes = parseDocument(doc);
+    const node = getNodeByIndex(nodes, doc.offsetAt(e.position));
     return {
-      contents: node.content
+      contents: format("shaderlab", node.definition.keyword, node.identifier)
     };
   }
 
-  return {
-    contents: "Shader"
-  };
+  return undefined;
 });
 
 // Only keep settings for open documents
@@ -166,28 +139,38 @@ documents.onDidClose(e => {
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent(change => {
   console.log("Document changed");
-  // validateTextDocument(change.document);
+  sendDiagnostics(change.document);
 });
 
-function validateTextDocument(textDocument: TextDocument): AST.Node {
+function getNodeByIndex(res: AST.Node, index: number) {
+  let node = res;
+  while (node.children && node.children.length) {
+    let n = node.children.find(
+      child =>
+        child.sourceMap.endIndex >= index && child.sourceMap.startIndex <= index
+    );
+    if (n) {
+      node = n;
+    } else {
+      break;
+    }
+  }
+  return node;
+}
+
+function parseDocument(doc:TextDocument): AST.Node {
   // In this simple example we get the settings for every validate run.
   //let settings = await getDocumentSettings(textDocument.uri);
 
   // The validator creates diagnostics for all uppercase words length 2 and more
-  let text = textDocument.getText();
-  const res = AST.parse(
-    text,
-    ShaderLab.Definitions.root,
-    (ShaderLab.Definitions as unknown) as AST.DefinitionList
-  );
-  console.log(res);
+  const text = doc.getText();
+  const res = AST.parse(text, ShaderLab.Definitions.root, definitions);
   return res;
   // let pattern = /\b[A-Z]{2,}\b/g;
   // let m: RegExpExecArray | null;
   // console.log(text);
 
   // let problems = 0;
-  // let diagnostics: Diagnostic[] = [];
   // while ((m = pattern.exec(text)) && problems < settings.maxNumberOfProblems) {
   //   problems++;
   //   let diagnostic: Diagnostic = {
@@ -224,42 +207,59 @@ function validateTextDocument(textDocument: TextDocument): AST.Node {
   // connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
 }
 
+function sendDiagnostics(doc: TextDocument) {
+  let diagnostics: Diagnostic[] = [];
+  const res = parseDocument(doc);
+  function getErrors(node:AST.Node) {
+    node.errors.forEach(error=>{
+      diagnostics.push({
+        severity:DiagnosticSeverity.Error,
+        range: {
+          start:doc.positionAt(error.startIndex),
+          end:doc.positionAt(error.endIndex||error.startIndex+1),
+        },
+        message: error.description||""
+      })
+    })
+    node.children.forEach(child=>{
+      getErrors(child);
+    })
+  }
+  getErrors(res);
+  connection.sendDiagnostics({uri:doc.uri,diagnostics})
+}
+
 connection.onDidChangeWatchedFiles(_change => {
   // Monitored files have change in VSCode
   connection.console.log("We received an file change event");
 });
 
 // This handler provides the initial list of the completion items.
-connection.onCompletion(
-  (_textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
-    // The pass parameter contains the position of the text document in
-    // which code complete got requested. For the example we ignore this
-    // info and always provide the same completion items.
-    return [
-      {
-        label: "TypeScript",
-        kind: CompletionItemKind.Text,
+connection.onCompletion((e: TextDocumentPositionParams): CompletionItem[] => {
+  const doc = documents.get(e.textDocument.uri);
+  if (doc) {
+    const node = getNodeByIndex(
+      parseDocument(doc),
+      doc.offsetAt(e.position)
+    );
+    return (node.definition.children || [])
+      .filter(def => definitions[def.type].keyword)
+      .map((def, i) => ({
+        label: definitions[def.type].keyword || "",
+        kind: CompletionItemKind.Keyword,
         data: 1
-      },
-      {
-        label: "JavaScript",
-        kind: CompletionItemKind.Text,
-        data: 2
-      }
-    ];
+      }));
   }
-);
+
+  return [];
+});
 
 // This handler resolves additional information for the item selected in
 // the completion list.
 connection.onCompletionResolve(
   (item: CompletionItem): CompletionItem => {
     if (item.data === 1) {
-      item.detail = "TypeScript details";
-      item.documentation = "TypeScript documentation";
-    } else if (item.data === 2) {
-      item.detail = "JavaScript details";
-      item.documentation = "JavaScript documentation";
+      item.detail = "Keyword";
     }
     return item;
   }
