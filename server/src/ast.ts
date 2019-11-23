@@ -30,6 +30,12 @@ export namespace AST {
      */
     contentEndIndex: number;
   }
+  export interface NodeError {
+    startIndex: number;
+    endIndex?: number;
+    description?: string;
+  }
+
   export interface Node {
     sourceMap: SourceMap;
     definition: NodeDefinition;
@@ -37,7 +43,7 @@ export namespace AST {
     children: Node[];
     content: string;
     parent: Node | undefined;
-    errors: { startIndex: number; endIndex?: number; description?: string }[];
+    errors: NodeError[];
   }
   export function parse(
     document: string,
@@ -48,19 +54,22 @@ export namespace AST {
       AST.Helpers.removeComments(document)
     );
     const ast = parseRecursive(
-      {
-        definition: root,
-        children: [],
-        content: clean,
-        sourceMap: {
-          startIndex: 0,
-          endIndex: document.length - 1,
-          contentStartIndex: 0,
-          contentEndIndex: document.length - 1
+      Parser[root.parser](
+        {
+          definition: root,
+          children: [],
+          content: clean,
+          sourceMap: {
+            startIndex: 0,
+            endIndex: document.length - 1,
+            contentStartIndex: 0,
+            contentEndIndex: document.length - 1
+          },
+          parent: undefined,
+          errors: []
         },
-        parent: undefined,
-        errors: []
-      },
+        definitions
+      ),
       definitions
     );
     return ast;
@@ -71,11 +80,15 @@ export namespace AST {
 
   export function parseRecursive(node: AST.Node, definitions: DefinitionList) {
     let saturated = { ...node };
-    for (const childDefinition of node.definition.children || []) {
-      saturated = Parser[definitions[childDefinition.type].parser](
-        saturated,
-        definitions
-      );
+    if (node.errors.length) return saturated;
+    const requiredParsers = [
+      ...new Set(
+        (node.definition.children || []).map(x => definitions[x.type].parser)
+      )
+    ];
+    for (const parser of requiredParsers) {
+      saturated = Parser[parser](saturated, definitions);
+      if (node.errors.length) return saturated;
     }
     saturated.children = saturated.children.map(child =>
       parseRecursive(child, definitions)
@@ -92,25 +105,58 @@ export namespace AST {
         if (childDefinition.keyword) {
           const childStartIndices = AST.Helpers.searchSafe(
             childDefinition.keyword,
-            node.content
-          );
+            node.content,
+            { singleWord: true }
+          ).filter(index => AST.Helpers.getDepth(index, node.content) === 0);
           for (const childStartIndex of childStartIndices) {
             const childContentStartIndex = AST.Helpers.searchSafe(
               OPEN_BRACE,
               node.content,
               { startIndex: childStartIndex }
-            ).filter(
-              index => AST.Helpers.getDepth(index, node.content) === 0
             )[0];
+            if (childContentStartIndex === undefined) {
+              node.children.push(
+                createStubNode(definitions, node, [
+                  {
+                    startIndex:
+                      (AST.Helpers.searchSafe("\n", node.content, {
+                        startIndex: childStartIndex
+                      })[0] || node.content.length) +
+                      parentNode.sourceMap.contentStartIndex,
+                    description: `'${OPEN_BRACE}' expected. '${childDefinition.keyword}' is a block.`
+                  }
+                ])
+              );
+              return node;
+            }
+
             const childContentEndIndex = AST.Helpers.findClosingBrace(
               childContentStartIndex,
               node.content
             );
+
+            if (childContentEndIndex === undefined) {
+              node.children.push(
+                createStubNode(definitions, node, [
+                  {
+                    startIndex:
+                      AST.Helpers.searchSafe("\n", node.content, {
+                        startIndex: childContentStartIndex
+                      })[0] || node.content.length,
+                    description: `'${CLOSE_BRACE}' expected.`
+                  }
+                ])
+              );
+              return node;
+            }
+
             node.children.push({
-              identifier: node.content.substring(
-                childStartIndex + childDefinition.keyword.length,
-                childContentStartIndex
-              ),
+              identifier: node.content
+                .substring(
+                  childStartIndex + childDefinition.keyword.length,
+                  childContentStartIndex
+                )
+                .trim(),
               children: [],
               content: node.content.substring(
                 childContentStartIndex + 1,
@@ -128,7 +174,8 @@ export namespace AST {
                   1,
                 contentStartIndex:
                   childContentStartIndex +
-                  parentNode.sourceMap.contentStartIndex,
+                  parentNode.sourceMap.contentStartIndex +
+                  1,
                 contentEndIndex:
                   childContentEndIndex + parentNode.sourceMap.contentStartIndex
               }
@@ -139,22 +186,42 @@ export namespace AST {
       return node;
     }
     root(parentNode: Node, definitions: DefinitionList): Node {
-      let node = this.block(
-        {
-          ...parentNode,
-          sourceMap: {
-            startIndex: 0,
-            contentStartIndex: 0,
-            endIndex: parentNode.content.length,
-            contentEndIndex: parentNode.content.length - 1
-          },
-          parent: undefined
-        },
-        definitions
-      );
+      let node = { ...parentNode };
+      const braceOffset =
+        AST.Helpers.searchSafe(OPEN_BRACE, parentNode.content).length -
+        AST.Helpers.searchSafe(CLOSE_BRACE, parentNode.content).length;
+      if (braceOffset !== 0) {
+        node.children.push(
+          createStubNode(definitions, node, [
+            {
+              startIndex: node.content.length - 1,
+              description: `Mismatched braces.`
+            }
+          ])
+        );
+        return node;
+      }
       return node;
     }
+    text(parentNode: Node): Node {
+      return parentNode;
+    }
   })();
+
+  function createStubNode(
+    definitions: DefinitionList,
+    node: Node,
+    errors: NodeError[] = []
+  ): Node {
+    return {
+      children: [],
+      content: "",
+      definition: definitions["stub"],
+      errors,
+      parent: node,
+      sourceMap: node.sourceMap
+    };
+  }
 }
 
 export namespace AST.Helpers {
@@ -166,7 +233,7 @@ export namespace AST.Helpers {
       if (text[i] === OPEN_BRACE) depth++;
       i++;
     }
-    return depth > 0 ? -1 : i - 1;
+    return depth > 0 ? undefined : i - 1;
   }
 
   export function removeComments(str: string | string[]) {
@@ -318,7 +385,9 @@ export namespace AST.Helpers {
   export function isIdentifier(str: any) {
     return !(
       !str ||
-      !![" ", "\n", AST.CLOSE_BRACE, AST.OPEN_BRACE].find(c => c === str)
+      !![" ", "\n", AST.CLOSE_BRACE, AST.OPEN_BRACE, '"', "'"].find(
+        c => c === str
+      )
     );
   }
 
@@ -382,7 +451,8 @@ export namespace AST.Helpers {
     while (node.children && node.children.length) {
       let n = node.children.find(
         child =>
-          child.sourceMap.endIndex >= index && child.sourceMap.startIndex <= index
+          child.sourceMap.endIndex >= index &&
+          child.sourceMap.startIndex <= index
       );
       if (n) {
         node = n;

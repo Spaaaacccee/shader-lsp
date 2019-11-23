@@ -4,88 +4,121 @@ import {
   TextDocument,
   Diagnostic,
   DiagnosticSeverity,
-  CompletionItemKind} from "vscode-languageserver";
-import { format } from "./utils";
+  CompletionItemKind
+} from "vscode-languageserver";
+import { format, camelCaseToNormal } from "./utils";
+
 export namespace ShaderLab {
-  interface ASTChildDefinition extends AST.ChildDefinition {
+  interface ChildDefinition extends AST.ChildDefinition {
     type: keyof typeof Definitions;
   }
-  interface ASTNodeDefinition extends AST.NodeDefinition {
+  interface NodeDefinition extends AST.NodeDefinition {
     id: keyof typeof Definitions;
-    children?: ASTChildDefinition[];
+    children?: ChildDefinition[];
   }
   export const Definitions = new (class Definitions {
-    root = new (class Root implements ASTNodeDefinition {
-      readonly children: ASTChildDefinition[] = [
-        {
-          type: "shaderDeclaration"
-        }
-      ];
-      readonly identifier = "none";
-      readonly id = "root";
-      readonly parser = "root";
-    })();
-    shaderDeclaration = new (class ShaderDeclaration
-      implements ASTNodeDefinition {
-      readonly identifier = "string";
-      readonly id = "shaderDeclaration";
-      readonly keyword = "Shader";
-      readonly parser = "block";
-      readonly children: ASTChildDefinition[] = [
+    readonly root: NodeDefinition = {
+      children: [{ type: "shaderDeclaration" }],
+      identifier: "none",
+      id: "root",
+      parser: "root"
+    };
+    readonly shaderDeclaration: NodeDefinition = {
+      identifier: "string",
+      id: "shaderDeclaration",
+      keyword: "Shader",
+      parser: "block",
+      children: [
         { type: "propertyListDeclaration" },
         { type: "subShaderDeclaration" }
-      ];
-    })();
-    propertyListDeclaration = new (class PropertyListDeclaration
-      implements ASTNodeDefinition {
-      children: ASTChildDefinition[] = [{ type: "property" }];
-      readonly id = "propertyListDeclaration";
-      readonly keyword = "Properties";
-      readonly parser = "block";
-      readonly identifier = "none";
-    })();
-    property = new (class Property implements ASTNodeDefinition {
-      readonly id = "property";
-      readonly children: ASTChildDefinition[] = [];
-      readonly parser = "block";
-      readonly identifier = "none";
-    })();
-    subShaderDeclaration = new (class SubShaderDeclaration
-      implements ASTNodeDefinition {
-      readonly id = "subShaderDeclaration";
-      readonly keyword = "SubShader";
-      readonly parser = "block";
-      readonly identifier = "none";
-    })();
+      ]
+    };
+    readonly propertyListDeclaration: NodeDefinition = {
+      id: "propertyListDeclaration",
+      keyword: "Properties",
+      parser: "block",
+      identifier: "none",
+      children: [{ type: "property" }]
+    };
+    readonly property: NodeDefinition = {
+      id: "property",
+      identifier: "none",
+      parser: "text"
+    };
+    readonly subShaderDeclaration: NodeDefinition = {
+      id: "subShaderDeclaration",
+      keyword: "SubShader",
+      parser: "block",
+      identifier: "none",
+      children: [{ type: "passDeclaration" }, { type: "tagsDeclaration" }]
+    };
+    readonly passDeclaration: NodeDefinition = {
+      id: "passDeclaration",
+      keyword: "Pass",
+      parser: "block",
+      identifier: "none",
+      children: [{ type: "tagsDeclaration" }]
+    };
+    readonly tagsDeclaration: NodeDefinition = {
+      id: "tagsDeclaration",
+      identifier: "none",
+      keyword: "Tags",
+      parser: "block"
+    };
+    readonly stub: NodeDefinition = {
+      id: "stub",
+      identifier: "none",
+      parser: "text"
+    };
   })();
 }
 
 export namespace ShaderLab.LSP {
   export function parseDocument(doc: TextDocument): AST.Node {
     const text = doc.getText();
-    const res = AST.parse(text, ShaderLab.Definitions.root, Definitions as unknown as AST.DefinitionList);
+    const res = AST.parse(
+      text,
+      ShaderLab.Definitions.root,
+      (Definitions as unknown) as AST.DefinitionList
+    );
     return res;
   }
-  export function provideHover(
-    document: TextDocument,
-    position: Position
-  ) {
-    const node = AST.Helpers.getNodeByIndex(parseDocument(document), document.offsetAt(position));
-    return {
-      contents: format("shaderlab", node.definition.keyword, node.identifier)
-    };
+  export function provideHover(document: TextDocument, position: Position) {
+    const node = AST.Helpers.getNodeByIndex(
+      parseDocument(document),
+      document.offsetAt(position)
+    );
+    if (node.definition.keyword) {
+      return {
+        contents: `${format(
+          "shaderlab",
+          node.definition.keyword,
+          node.identifier
+        )}\n${camelCaseToNormal(
+          node.definition.id
+        )} (${camelCaseToNormal(node.definition.parser)})`
+      };
+    } else return undefined;
   }
-  export function provideCompletion(doc:TextDocument, position: Position) {
-    const node = AST.Helpers.getNodeByIndex(parseDocument(doc), doc.offsetAt(position));
+  export function provideCompletion(doc: TextDocument, position: Position) {
+    const node = AST.Helpers.getNodeByIndex(
+      parseDocument(doc),
+      doc.offsetAt(position)
+    );
     return (node.definition.children || [])
-      .filter(def => (Definitions as unknown as AST.DefinitionList)[def.type].keyword)
-      .map((def, i) => ({
-        label: (Definitions as unknown as AST.DefinitionList)[def.type].keyword || "",
+      .filter(
+        def =>
+          ((Definitions as unknown) as AST.DefinitionList)[def.type].keyword
+      )
+      .map(def => ({
+        label:
+          ((Definitions as unknown) as AST.DefinitionList)[def.type].keyword ||
+          "",
         kind: CompletionItemKind.Keyword,
         data: 1
       }));
   }
-  export function provideDiagnostics(doc: TextDocument):Diagnostic[] {
+  export function provideDiagnostics(doc: TextDocument): Diagnostic[] {
     let diagnostics: Diagnostic[] = [];
     const res = parseDocument(doc);
     function getErrors(node: AST.Node) {

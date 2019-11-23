@@ -135,22 +135,6 @@ documents.onDidChangeContent(change => {
   connection.sendDiagnostics({ uri: change.document.uri, diagnostics });
 });
 
-function getNodeByIndex(res: AST.Node, index: number) {
-  let node = res;
-  while (node.children && node.children.length) {
-    let n = node.children.find(
-      child =>
-        child.sourceMap.endIndex >= index && child.sourceMap.startIndex <= index
-    );
-    if (n) {
-      node = n;
-    } else {
-      break;
-    }
-  }
-  return node;
-}
-
 connection.onDidChangeWatchedFiles(_change => {
   // Monitored files have change in VSCode
   connection.console.log("We received an file change event");
