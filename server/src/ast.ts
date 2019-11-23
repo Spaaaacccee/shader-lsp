@@ -1,3 +1,5 @@
+import { camelCaseToNormal } from './utils';
+
 export namespace AST {
   export const OPEN_BRACE = "{";
   export const CLOSE_BRACE = "}";
@@ -123,7 +125,7 @@ export namespace AST {
                         startIndex: childStartIndex
                       })[0] || node.content.length) +
                       parentNode.sourceMap.contentStartIndex,
-                    description: `'${OPEN_BRACE}' expected. '${childDefinition.keyword}' is a block.`
+                    description: `'${OPEN_BRACE}' expected. A ${camelCaseToNormal(childDefinition.keyword)} should be a block.`
                   }
                 ])
               );

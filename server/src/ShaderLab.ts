@@ -17,6 +17,15 @@ export namespace ShaderLab {
     children?: ChildDefinition[];
   }
   export const Definitions = new (class Definitions {
+    modifierDeclarations: ChildDefinition[] = [
+      {
+        type: "fogDeclaration"
+      }
+    ];
+    inheritableShaderDeclarations:ChildDefinition[] = [
+      { type: "subShaderDeclaration" },
+      { type: "categoryDeclaration" }
+    ]
     readonly root: NodeDefinition = {
       children: [{ type: "shaderDeclaration" }],
       identifier: "none",
@@ -30,7 +39,7 @@ export namespace ShaderLab {
       parser: "block",
       children: [
         { type: "propertyListDeclaration" },
-        { type: "subShaderDeclaration" }
+        ...this.inheritableShaderDeclarations
       ]
     };
     readonly propertyListDeclaration: NodeDefinition = {
@@ -50,19 +59,45 @@ export namespace ShaderLab {
       keyword: "SubShader",
       parser: "block",
       identifier: "none",
-      children: [{ type: "passDeclaration" }, { type: "tagsDeclaration" }]
+      children: [
+        { type: "passDeclaration" },
+        { type: "tagsDeclaration" },
+        ...this.modifierDeclarations
+      ]
     };
     readonly passDeclaration: NodeDefinition = {
       id: "passDeclaration",
       keyword: "Pass",
       parser: "block",
       identifier: "none",
-      children: [{ type: "tagsDeclaration" }]
+      children: [{ type: "tagsDeclaration" }, { type: "materialDeclaration" }]
     };
     readonly tagsDeclaration: NodeDefinition = {
       id: "tagsDeclaration",
       identifier: "none",
       keyword: "Tags",
+      parser: "block"
+    };
+    readonly materialDeclaration: NodeDefinition = {
+      id: "materialDeclaration",
+      identifier: "none",
+      keyword: "Material",
+      parser: "block"
+    };
+    readonly categoryDeclaration: NodeDefinition = {
+      id: "categoryDeclaration",
+      identifier: "none",
+      keyword: "Category",
+      parser: "block",
+      children: [
+        ...this.inheritableShaderDeclarations,
+        ...this.modifierDeclarations
+      ]
+    };
+    readonly fogDeclaration: NodeDefinition = {
+      id: "fogDeclaration",
+      identifier: "none",
+      keyword: "Fog",
       parser: "block"
     };
     readonly stub: NodeDefinition = {
@@ -94,9 +129,9 @@ export namespace ShaderLab.LSP {
           "shaderlab",
           node.definition.keyword,
           node.identifier
-        )}\n${camelCaseToNormal(
-          node.definition.id
-        )} (${camelCaseToNormal(node.definition.parser)})`
+        )}\n${camelCaseToNormal(node.definition.id)} (${camelCaseToNormal(
+          node.definition.parser
+        )})`
       };
     } else return undefined;
   }
