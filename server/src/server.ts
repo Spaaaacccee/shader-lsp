@@ -13,11 +13,11 @@ import {
   Range
 } from "vscode-languageserver";
 
-import { AST, ShaderLab } from "./ast";
+import { AST } from "./AST";
+import { ShaderLab } from "./ShaderLab";
 import { format } from "./utils";
 
 const definitions = (ShaderLab.Definitions as unknown) as AST.DefinitionList;
-
 
 let connection = createConnection(ProposedFeatures.all);
 
@@ -117,17 +117,10 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 }
 
 connection.onHover(e => {
-  const doc = documents.get(e.textDocument.uri);
-  if (doc) {
-    const text = doc.getText();
-    const nodes = parseDocument(doc);
-    const node = getNodeByIndex(nodes, doc.offsetAt(e.position));
-    return {
-      contents: format("shaderlab", node.definition.keyword, node.identifier)
-    };
-  }
-
-  return undefined;
+  const document = documents.get(e.textDocument.uri);
+  if (document) {
+    return ShaderLab.LSP.provideHover(document, e.position);
+  } else return undefined;
 });
 
 // Only keep settings for open documents
@@ -138,8 +131,8 @@ documents.onDidClose(e => {
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent(change => {
-  console.log("Document changed");
-  sendDiagnostics(change.document);
+  const diagnostics = ShaderLab.LSP.provideDiagnostics(change.document);
+  connection.sendDiagnostics({ uri: change.document.uri, diagnostics });
 });
 
 function getNodeByIndex(res: AST.Node, index: number) {
@@ -158,77 +151,6 @@ function getNodeByIndex(res: AST.Node, index: number) {
   return node;
 }
 
-function parseDocument(doc:TextDocument): AST.Node {
-  // In this simple example we get the settings for every validate run.
-  //let settings = await getDocumentSettings(textDocument.uri);
-
-  // The validator creates diagnostics for all uppercase words length 2 and more
-  const text = doc.getText();
-  const res = AST.parse(text, ShaderLab.Definitions.root, definitions);
-  return res;
-  // let pattern = /\b[A-Z]{2,}\b/g;
-  // let m: RegExpExecArray | null;
-  // console.log(text);
-
-  // let problems = 0;
-  // while ((m = pattern.exec(text)) && problems < settings.maxNumberOfProblems) {
-  //   problems++;
-  //   let diagnostic: Diagnostic = {
-  //     severity: DiagnosticSeverity.Warning,
-  //     range: {
-  //       start: textDocument.positionAt(m.index),
-  //       end: textDocument.positionAt(m.index + m[0].length)
-  //     },
-  //     message: `${m[0]} is all uppercase.`,
-  //     source: "ex"
-  //   };
-  //   if (hasDiagnosticRelatedInformationCapability) {
-  //     diagnostic.relatedInformation = [
-  //       {
-  //         location: {
-  //           uri: textDocument.uri,
-  //           range: Object.assign({}, diagnostic.range)
-  //         },
-  //         message: "Spelling matters"
-  //       },
-  //       {
-  //         location: {
-  //           uri: textDocument.uri,
-  //           range: Object.assign({}, diagnostic.range)
-  //         },
-  //         message: "Particularly for names"
-  //       }
-  //     ];
-  //   }
-  //   diagnostics.push(diagnostic);
-  // }
-
-  // // Send the computed diagnostics to VSCode.
-  // connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
-}
-
-function sendDiagnostics(doc: TextDocument) {
-  let diagnostics: Diagnostic[] = [];
-  const res = parseDocument(doc);
-  function getErrors(node:AST.Node) {
-    node.errors.forEach(error=>{
-      diagnostics.push({
-        severity:DiagnosticSeverity.Error,
-        range: {
-          start:doc.positionAt(error.startIndex),
-          end:doc.positionAt(error.endIndex||error.startIndex+1),
-        },
-        message: error.description||""
-      })
-    })
-    node.children.forEach(child=>{
-      getErrors(child);
-    })
-  }
-  getErrors(res);
-  connection.sendDiagnostics({uri:doc.uri,diagnostics})
-}
-
 connection.onDidChangeWatchedFiles(_change => {
   // Monitored files have change in VSCode
   connection.console.log("We received an file change event");
@@ -238,20 +160,8 @@ connection.onDidChangeWatchedFiles(_change => {
 connection.onCompletion((e: TextDocumentPositionParams): CompletionItem[] => {
   const doc = documents.get(e.textDocument.uri);
   if (doc) {
-    const node = getNodeByIndex(
-      parseDocument(doc),
-      doc.offsetAt(e.position)
-    );
-    return (node.definition.children || [])
-      .filter(def => definitions[def.type].keyword)
-      .map((def, i) => ({
-        label: definitions[def.type].keyword || "",
-        kind: CompletionItemKind.Keyword,
-        data: 1
-      }));
-  }
-
-  return [];
+    return ShaderLab.LSP.provideCompletion(doc, e.position);
+  } else return [];
 });
 
 // This handler resolves additional information for the item selected in
