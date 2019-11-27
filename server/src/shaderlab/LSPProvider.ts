@@ -41,7 +41,7 @@ export function provideHover(
         kind: "markdown",
         value: `${code("shaderlab", content, node.identifier)}\n${_.startCase(
           node.definition.id
-        )}`
+        )} ${_.startCase(node.definition.parser.id)}`
       }
     };
   } else return undefined;
