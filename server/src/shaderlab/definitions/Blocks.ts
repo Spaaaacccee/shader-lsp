@@ -1,5 +1,5 @@
 import { ChildDefinition, NodeDefinition } from "../../Types";
-import { block, keyword } from "../../parsers/Parsers";
+import { block, keyword, unknown } from "../../parsers/Parsers";
 
 import { TagDefinition } from "./Tags";
 
@@ -35,8 +35,15 @@ export const CgDeclarationDefinition: NodeDefinition = {
   endKeyword: "ENDCG",
   parser: keyword,
   identifier: "none",
-  children: () => [],
+  children: () => [{ type: CgContentDefinition }],
   suggest: ["keyword", "endKeyword"]
+};
+
+export const CgContentDefinition: NodeDefinition = {
+  id: "CgContent",
+  parser: unknown,
+  children: () => [],
+  identifier: "none"
 };
 
 export const TagsDeclarationDefinition: NodeDefinition = {

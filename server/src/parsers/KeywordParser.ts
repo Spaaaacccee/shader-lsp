@@ -30,9 +30,9 @@ export default class KeywordParser implements Parser {
           errors: [],
           parent: node,
           sourceMap: {
-            contentEndIndex: endIndex + node.sourceMap.contentStartIndex,
+            contentEndIndex: endIndex + node.sourceMap.contentStartIndex - 1,
             contentStartIndex:
-              startIndex + 1 + node.sourceMap.contentStartIndex,
+              startIndex + definition.keyword.length + node.sourceMap.contentStartIndex,
             endIndex:
               endIndex +
               definition.endKeyword.length +
