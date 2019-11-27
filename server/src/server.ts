@@ -1,23 +1,14 @@
 import {
   createConnection,
   TextDocuments,
-  TextDocument,
-  Diagnostic,
-  DiagnosticSeverity,
   ProposedFeatures,
   InitializeParams,
   DidChangeConfigurationNotification,
   CompletionItem,
-  CompletionItemKind,
-  TextDocumentPositionParams,
-  Range
+  TextDocumentPositionParams
 } from "vscode-languageserver";
 
-import { AST } from "./AST";
-import { ShaderLab } from "./ShaderLab";
-import { format } from "./utils";
-
-const definitions = (ShaderLab.Definitions as unknown) as AST.DefinitionList;
+import ShaderLab from "./shaderlab/ShaderLab";
 
 let connection = createConnection(ProposedFeatures.all);
 
@@ -101,21 +92,6 @@ connection.onDidChangeConfiguration(change => {
   // });
 });
 
-function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
-  if (!hasConfigurationCapability) {
-    return Promise.resolve(globalSettings);
-  }
-  let result = documentSettings.get(resource);
-  if (!result) {
-    result = connection.workspace.getConfiguration({
-      scopeUri: resource,
-      section: "languageServerExample"
-    });
-    documentSettings.set(resource, result);
-  }
-  return result;
-}
-
 connection.onHover(e => {
   const document = documents.get(e.textDocument.uri);
   if (document) {
@@ -151,12 +127,8 @@ connection.onCompletion((e: TextDocumentPositionParams): CompletionItem[] => {
 // This handler resolves additional information for the item selected in
 // the completion list.
 connection.onCompletionResolve(
-  (item: CompletionItem): CompletionItem => {
-    if (item.data === 1) {
-      item.detail = "Keyword";
-    }
-    return item;
-  }
+  (item: CompletionItem): CompletionItem =>
+    ShaderLab.LSP.provideCompletionResolve(item)
 );
 
 /*
