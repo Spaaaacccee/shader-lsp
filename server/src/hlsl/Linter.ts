@@ -11,7 +11,7 @@ import {
 } from "vscode-languageserver";
 import { RunTrigger } from "./RunTrigger";
 import { ThrottledDelayer } from "./Throttler";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
 
 class CompilerOutputParser {
   private data: string = "";
@@ -29,6 +29,7 @@ class CompilerOutputParser {
 
   public write(buffer: Buffer) {
     this.data += buffer.toString();
+    console.log(this.data);
     var newlineIndex = -1;
     while ((newlineIndex = this.data.indexOf("\n")) > -1) {
       this.processLine(this.data.substr(0, newlineIndex));
@@ -38,6 +39,18 @@ class CompilerOutputParser {
 
   private processLine(line: string) {
     if (!line.startsWith(this.filename)) {
+      if (line.startsWith("In file included from " + this.filename)) {
+        const lineNo = parseInt(line.split(":").filter(x=>!/\s/.test(x)).pop() || "") - 1;
+        const lineContent = this.document.getText().split("\n")[lineNo];
+        this.diagnostics.push({
+          message: line,
+          severity: DiagnosticSeverity.Error,
+          range: {
+            start: { character: lineContent.indexOf("#include") - 1, line: lineNo },
+            end: { character: lineContent.indexOf("#include")+"#include".length - 1, line: lineNo }
+          }
+        });
+      }
       return;
     }
 
@@ -89,10 +102,15 @@ class CompilerOutputParser {
   }
 }
 
+type Options = {
+  executable?: string;
+  includeDirs?: string[];
+};
+
 export default class HLSLLintingProvider implements Disposable {
   public diagnostics: Diagnostic[] = [];
 
-  private executable: string = "C:/DirectXShaderCompiler/bin/dxc.exe";
+  private executable: string = "dxc.exe";
 
   private executableNotFound: boolean = false;
 
@@ -150,8 +168,11 @@ export default class HLSLLintingProvider implements Disposable {
     delayer.trigger(() => this.lint(textDocument));
   }
 
-  public lint(textDocument: TextDocument): Promise<Diagnostic[]> {
-    return new Promise<Diagnostic[]>((resolve, reject) => {
+  public lint(
+    textDocument: TextDocument,
+    settings: Options = { executable: "dxc", includeDirs: [] }
+  ): Promise<Diagnostic[]> {
+    return new Promise<Diagnostic[]>((res, rej) => {
       let filename = tempfile(".hlsl");
 
       let cleanup = ((filename: string) => {
@@ -163,7 +184,8 @@ export default class HLSLLintingProvider implements Disposable {
       //     text = text.replace(/#pragma\s+once[^\n]*\n/g, "//#pragma once\n");
       //   }
 
-      let executable = this.executable || "dxc";
+      let executable = settings.executable || "dxc";
+      let includeDirs = settings.includeDirs || [];
 
       let decoder = new CompilerOutputParser(filename, textDocument);
 
@@ -254,9 +276,9 @@ export default class HLSLLintingProvider implements Disposable {
       args.push("-I");
       args.push(dirname(textDocument.uri));
 
-      this.includeDirs.forEach(includeDir => {
+      includeDirs.forEach(includeDir => {
         args.push("-I");
-        args.push(includeDir);
+        args.push(resolve(includeDir));
       });
 
       args.push(filename);
@@ -279,7 +301,7 @@ export default class HLSLLintingProvider implements Disposable {
           if (err) {
             console.log("error:", err);
             cleanup();
-            reject(err);
+            rej(err);
             return;
           }
 
@@ -291,12 +313,12 @@ export default class HLSLLintingProvider implements Disposable {
             if (this.executableNotFound) {
               console.error("DXC executable not found");
               cleanup();
-              reject("DXC executable not found");
+              rej("DXC executable not found");
               return;
             }
             var message: string;
             if ((<any>error).code === "ENOENT") {
-              message = `Cannot lint the HLSL file. The 'dxc' program was not found. Use the 'hlsl.linter.executablePath' setting to configure the location of 'dxc'`;
+              message = `Cannot lint the HLSL file. The ${executable} program was not found.`;
             } else {
               message = error.message
                 ? error.message
@@ -305,7 +327,7 @@ export default class HLSLLintingProvider implements Disposable {
             console.log(message);
             this.executableNotFound = true;
             cleanup();
-            reject(message);
+            rej(message);
           });
           if (childProcess.pid) {
             childProcess.stderr.on("data", (data: Buffer) => {
@@ -314,16 +336,16 @@ export default class HLSLLintingProvider implements Disposable {
             childProcess.stderr.on("end", () => {
               let diagnostics: Diagnostic[] = decoder.getDiagnostics();
               if (diagnostics.length) {
-                this.diagnostics = diagnostics
+                this.diagnostics = diagnostics;
               } else {
-                this.diagnostics = []
+                this.diagnostics = [];
               }
               cleanup();
-              resolve(this.diagnostics);
+              res(this.diagnostics);
             });
           } else {
             cleanup();
-            reject("failed to start DXC");
+            rej("failed to start DXC");
           }
         }).bind(this)
       );

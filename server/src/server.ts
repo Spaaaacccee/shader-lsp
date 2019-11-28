@@ -9,6 +9,7 @@ import {
 } from "vscode-languageserver";
 
 import ShaderLab from "./shaderlab/ShaderLab";
+import globalSettings, { Settings } from "./Settings";
 
 let connection = createConnection(ProposedFeatures.all);
 
@@ -16,7 +17,6 @@ let documents: TextDocuments = new TextDocuments();
 
 let hasConfigurationCapability: boolean = false;
 let hasWorkspaceFolderCapability: boolean = false;
-let hasDiagnosticRelatedInformationCapability: boolean = false;
 
 connection.onInitialize((params: InitializeParams) => {
   let capabilities = params.capabilities;
@@ -27,11 +27,6 @@ connection.onInitialize((params: InitializeParams) => {
   );
   hasWorkspaceFolderCapability = !!(
     capabilities.workspace && !!capabilities.workspace.workspaceFolders
-  );
-  hasDiagnosticRelatedInformationCapability = !!(
-    capabilities.textDocument &&
-    capabilities.textDocument.publishDiagnostics &&
-    capabilities.textDocument.publishDiagnostics.relatedInformation
   );
 
   return {
@@ -62,35 +57,38 @@ connection.onInitialized(() => {
   }
 });
 
-// The example settings
-interface ExampleSettings {
-  maxNumberOfProblems: number;
-}
-
-// The global settings, used when the `workspace/configuration` request is not supported by the client.
-// Please note that this is not the case when using this server with the client provided in this example
-// but could happen with other clients.
-const defaultSettings: ExampleSettings = { maxNumberOfProblems: 1000 };
-let globalSettings: ExampleSettings = defaultSettings;
-
-// Cache the settings of all open documents
-let documentSettings: Map<string, Thenable<ExampleSettings>> = new Map();
-
 connection.onDidChangeConfiguration(change => {
   if (hasConfigurationCapability) {
     // Reset all cached document settings
-    documentSettings.clear();
+    Settings.documentSettings.clear();
   } else {
-    globalSettings = <ExampleSettings>(
-      (change.settings.languageServerExample || defaultSettings)
-    );
+    Settings.globalSettings = <Settings>{
+      ...globalSettings,
+      ...(change.settings.shaderlabLanguageServer || {})
+    };
   }
-
-  // Revalidate all open text documents
-  // documents.all().forEach(()=>{
-
-  // });
+  documents.all().forEach(x => {
+    refreshDocumentSettings(x.uri);
+    ShaderLab.LSP.provideDiagnostics({ document: x }, connection);
+  });
 });
+
+async function refreshDocumentSettings(resource: string): Promise<void> {
+  if (!hasConfigurationCapability) {
+    return;
+  }
+  let result = Settings.documentSettings.get(resource);
+  if (!result) {
+    result = await connection.workspace.getConfiguration({
+      scopeUri: resource,
+      section: "shaderlabLanguageServer"
+    });
+    if (result) {
+      Settings.documentSettings.set(resource, result);
+    }
+  }
+  return;
+}
 
 connection.onHover(e => {
   const document = documents.get(e.textDocument.uri);
@@ -101,21 +99,14 @@ connection.onHover(e => {
 
 // Only keep settings for open documents
 documents.onDidClose(e => {
-  documentSettings.delete(e.document.uri);
+  Settings.documentSettings.delete(e.document.uri);
 });
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
-documents.onDidChangeContent(change => {
-  ShaderLab.LSP.provideDiagnostics(
-    change,
-    connection
-  );
-});
-
-connection.onDidChangeWatchedFiles(_change => {
-  // Monitored files have change in VSCode
-  connection.console.log("We received an file change event");
+documents.onDidChangeContent(async change => {
+  await refreshDocumentSettings(change.document.uri);
+  ShaderLab.LSP.provideDiagnostics(change, connection);
 });
 
 // This handler provides the initial list of the completion items.
@@ -132,26 +123,6 @@ connection.onCompletionResolve(
   (item: CompletionItem): CompletionItem =>
     ShaderLab.LSP.provideCompletionResolve(item)
 );
-
-/*
-connection.onDidOpenTextDocument((params) => {
-	// A text document got opened in VSCode.
-	// params.textDocument.uri uniquely identifies the document. For documents store on disk this is a file URI.
-	// params.textDocument.text the initial full content of the document.
-	connection.console.log(`${params.textDocument.uri} opened.`);
-});
-connection.onDidChangeTextDocument((params) => {
-	// The content of a text document did change in VSCode.
-	// params.textDocument.uri uniquely identifies the document.
-	// params.contentChanges describe the content changes to the document.
-	connection.console.log(`${params.textDocument.uri} changed: ${JSON.stringify(params.contentChanges)}`);
-});
-connection.onDidCloseTextDocument((params) => {
-	// A text document got closed in VSCode.
-	// params.textDocument.uri uniquely identifies the document.
-	connection.console.log(`${params.textDocument.uri} closed.`);
-});
-*/
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events

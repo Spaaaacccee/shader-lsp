@@ -2,6 +2,7 @@ import { Diagnostic, TextDocument } from "vscode-languageserver";
 
 import HLSLLintingProvider from "../../hlsl/Linter";
 import { Service } from "../../Types";
+import Settings from '../../Settings';
 import _ from "lodash";
 
 function capitalise(str: string) {
@@ -18,7 +19,11 @@ export default class HLSLLinter implements Service {
   diagnostics: Diagnostic[] = [];
   linter = new HLSLLintingProvider();
   async run(text: TextDocument) {
-    this.diagnostics = await this.linter.lint(text);
+    const settings = {
+      ...Settings.globalSettings,
+      ...Settings.documentSettings.get(text.uri)
+    }
+    this.diagnostics = await this.linter.lint(text, {executable:settings.dxcPath,includeDirs:settings.includePaths});
     return this.diagnostics.map(x => ({
       ...x,
       message: end(capitalise(x.message))
