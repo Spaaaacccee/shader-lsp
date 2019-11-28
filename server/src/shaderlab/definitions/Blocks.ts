@@ -36,7 +36,8 @@ export const CgDeclarationDefinition: NodeDefinition = {
   parser: keyword,
   identifier: "none",
   children: () => [{ type: CgContentDefinition }],
-  suggest: ["keyword", "endKeyword"]
+  suggest: ["keyword", "endKeyword"],
+  services:["HLSLLinter"]
 };
 
 export const CgContentDefinition: NodeDefinition = {

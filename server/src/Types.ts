@@ -1,3 +1,7 @@
+import { Diagnostic, TextDocument } from "vscode-languageserver";
+
+import Services from "./Services";
+
 type NonStringKeys<T> = {
   [P in keyof T]: T[P] extends string | undefined ? never : P;
 }[keyof T];
@@ -24,12 +28,17 @@ interface NodeDefinitionBase {
   readonly getWord?: (content: string, index: number) => string;
   readonly parser: Parser;
   readonly description?: string;
+  readonly services?: (keyof typeof Services)[];
 }
 export type Snippet = {
   value: string;
   display?: string;
   description?: string;
 };
+
+export interface Service {
+  run: (text: TextDocument) => Promise<Diagnostic[]>;
+}
 
 export interface NodeDefinition extends NodeDefinitionBase {
   readonly suggest?: (keyof PickString<NodeDefinitionBase>)[];

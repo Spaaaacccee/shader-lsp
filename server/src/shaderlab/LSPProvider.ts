@@ -1,18 +1,20 @@
-import * as _ from "lodash";
-
 import {
   CompletionItem,
   CompletionItemKind,
+  Connection,
   Diagnostic,
   DiagnosticSeverity,
   MarkupContent,
   Position,
-  TextDocument
+  TextDocument,
+  TextDocumentChangeEvent
 } from "vscode-languageserver";
-import { Node, NodeDefinition } from "../Types";
+import { Node, NodeDefinition, Service } from "../Types";
 import { getNodeByIndex, getWord } from "../Helpers";
 
 import Definitions from "./definitions/Definitions";
+import Services from "../Services";
+import _ from "lodash";
 import { code } from "../format";
 import { parse } from "../AST";
 
@@ -101,10 +103,15 @@ export function provideCompletion(
   return [...suggestions, ...snippets];
 }
 
-export function provideDiagnostics(doc: TextDocument): Diagnostic[] {
+export async function provideDiagnostics(
+  change: TextDocumentChangeEvent,
+  connection: Connection
+): Promise<void> {
+  const doc = change.document;
   let diagnostics: Diagnostic[] = [];
+  let promises: Promise<Diagnostic[]>[] = [];
   const res = parseDocument(doc);
-  function getErrors(node: Node) {
+  function getDiagnostics(node: Node) {
     node.errors.forEach(error => {
       diagnostics.push({
         severity: DiagnosticSeverity.Error,
@@ -115,10 +122,27 @@ export function provideDiagnostics(doc: TextDocument): Diagnostic[] {
         message: error.description || ""
       });
     });
+    (node.definition.services || []).forEach(serviceName => {
+    promises.push(
+        Services[serviceName].run(
+          TextDocument.create(
+            change.document.uri,
+            "shaderlab",
+            1,
+            res.content.substr(0,node.sourceMap.contentStartIndex).replace(/./g," ") + node.content
+          )
+        )
+      );
+    });
     node.children.forEach(child => {
-      getErrors(child);
+      getDiagnostics(child);
     });
   }
-  getErrors(res);
-  return diagnostics;
+  getDiagnostics(res);
+  const additionalDiagnostics = await Promise.all(promises);
+
+  connection.sendDiagnostics({
+    uri: change.document.uri,
+    diagnostics: _.flatten(additionalDiagnostics).concat(diagnostics)
+  });
 }

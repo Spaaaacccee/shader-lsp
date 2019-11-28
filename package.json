@@ -52,5 +52,8 @@
     "@types/node": "^8.0.0",
     "tslint": "^5.16.0",
     "typescript": "^3.5.1"
+  },
+  "dependencies": {
+    "tempfile": "^3.0.0"
   }
 }
